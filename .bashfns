@@ -1,0 +1,452 @@
+#!/usr/bin/env bash
+
+#--------------------------------------------------------------
+#  Automatic setting of $DISPLAY (if not set already).
+#  This works for me - your mileage may vary. . . .
+#  The problem is that different types of terminals give
+#+ different answers to 'who am i' (rxvt in particular can be
+#+ troublesome) - however this code seems to work in a majority
+#+ of cases.
+#--------------------------------------------------------------
+
+
+FQDN=`hostname -f`
+function __makeTerminalTitle() {
+    local title=''
+
+    local CURRENT_DIR="${PWD/#$HOME/\~}"
+
+    if [ -n "${SSH_CONNECTION}" ]; then
+        title+="`hostname`:${CURRENT_DIR} [`whoami`@${FQDN}]"
+    else
+        title+="${CURRENT_DIR} [`whoami`]"
+    fi
+
+    echo -en '\033]2;'${title}'\007'
+}
+
+function __getMachineId() {
+    if [ -f /etc/machine-id ]; then
+        echo $((0x$(cat /etc/machine-id | head -c 15)))
+    else
+        echo $(( (${#HOSTNAME}+0x$(hostid))))
+    fi
+}
+
+function __makePS1() {
+    local EXIT="$?"
+
+    if [ ! -n "${HOST_COLOR}" ]; then
+        local H=$(__getMachineId)
+        HOST_COLOR=$(tput setaf $((H%5 + 2))) # foreground
+        #HOST_COLOR="\e[4$((H%5 + 2))m" # background
+    fi
+
+    PS1=''
+
+    PS1+="${debian_chroot:+($debian_chroot)}"
+
+    if [ -n "${VIRTUAL_ENV}" ]; then
+        local VENV=`basename $VIRTUAL_ENV`
+        PS1+="\[${BWhite}\](${VENV}) \[${Color_Off}\]" # show virtualenv if in it
+    fi
+
+    if [ ${USER} == root ]; then
+        PS1+="\[${Red}\]" # root
+    elif [ ${USER} != ${LOGNAME} ]; then
+        PS1+="\[${Blue}\]" # normal user
+    else
+        PS1+="\[${Green}\]" # normal user
+    fi
+    PS1+="\u\[${Color_Off}\]"
+
+    if [ -n "${SSH_CONNECTION}" ]; then
+        PS1+="\[${BWhite}\]@"
+        PS1+="\[${UWhite}${HOST_COLOR}\]\h\[${Color_Off}\]" # host displayed only if ssh connection
+    fi
+
+    PS1+=":\[${BYellow}\]\w" # working directory
+
+    # background jobs
+    local NO_JOBS=`jobs -p | wc -w`
+    if [ ${NO_JOBS} != 0 ]; then
+        PS1+=" \[${BGreen}\][j${NO_JOBS}]\[${Color_Off}\]"
+    fi
+
+    # screen sessions
+    local SCREEN_PATHS="/var/run/screens/S-`whoami` /var/run/screen/S-`whoami` /var/run/uscreens/S-`whoami`"
+
+    for screen_path in ${SCREEN_PATHS}; do
+        if [ -d ${screen_path} ]; then
+            SCREEN_JOBS=`ls ${screen_path} | wc -w`
+            if [ ${SCREEN_JOBS} != 0 ]; then
+                local current_screen="$(echo ${STY} | cut -d '.' -f 1)"
+                if [ -n "${current_screen}" ]; then
+                    current_screen=":${current_screen}"
+                fi
+                PS1+=" \[${BGreen}\][s${SCREEN_JOBS}${current_screen}]\[${Color_Off}\]"
+            fi
+            break
+        fi
+    done
+
+    # git branch
+    if [ -x "`which git 2>&1`" ]; then
+        local branch="$(git name-rev --name-only HEAD 2>/dev/null)"
+
+        if [ -n "${branch}" ]; then
+            local git_status="$(git status --porcelain -b 2>/dev/null)"
+            local letters="$( echo "${git_status}" | grep --regexp=' \w ' | sed -e 's/^\s\?\(\w\)\s.*$/\1/' )"
+            local untracked="$( echo "${git_status}" | grep -F '?? ' | sed -e 's/^\?\(\?\)\s.*$/\1/' )"
+            local status_line="$( echo -e "${letters}\n${untracked}" | sort | uniq | tr -d '[:space:]' )"
+            PS1+=" \[${BBlue}\](${branch}"
+            if [ -n "${status_line}" ]; then
+                PS1+=" ${status_line}"
+            fi
+            PS1+=")\[${Color_Off}\]"
+        fi
+    fi
+
+    # exit code
+    if [ ${EXIT} != 0 ]; then
+        PS1+=" \[${BRed}\][!${EXIT}]\[${Color_Off}\]"
+    fi
+
+    PS1+=" \[${BPurple}\]\\$\[${Color_Off}\] " # prompt
+
+    __makeTerminalTitle
+}
+
+
+function get_xserver ()
+{
+    case $TERM in
+        xterm )
+            XSERVER=$(who am i | awk '{print $NF}' | tr -d ')''(' )
+            # Ane-Pieter Wieringa suggests the following alternative:
+            #  I_AM=$(who am i)
+            #  SERVER=${I_AM#*(}
+            #  SERVER=${SERVER%*)}
+            XSERVER=${XSERVER%%:*}
+            ;;
+            aterm | rxvt)
+            # Find some code that works here. ...
+            ;;
+    esac
+}
+
+if [ -z ${DISPLAY:=""} ]; then
+    get_xserver
+    if [[ -z ${XSERVER}  || ${XSERVER} == $(hostname) ||
+       ${XSERVER} == "unix" ]]; then
+          DISPLAY=":0.0"          # Display on local host.
+    else
+       DISPLAY=${XSERVER}:0.0     # Display on remote host.
+    fi
+fi
+
+export DISPLAY
+
+#-------------------------------------------------------------
+# Function to run upon exit of shell.
+#-------------------------------------------------------------
+function _exit()              
+{
+    echo -e "${BRed}Hasta la vista, baby${NC}"
+}
+trap _exit EXIT
+
+#-------------------------------------------------------------
+# Returns system load as percentage, i.e., '40' rather than '0.40)'.
+#-------------------------------------------------------------
+function load()
+{
+    local SYSLOAD=$(cut -d " " -f1 /proc/loadavg | tr -d '.')
+    # System load of the current host.
+    echo $((10#$SYSLOAD))       # Convert to decimal.
+}
+
+#-------------------------------------------------------------
+# Returns a color indicating system load.
+#-------------------------------------------------------------
+function load_color()
+{
+    local SYSLOAD=$(load)
+    if [ ${SYSLOAD} -gt ${XLOAD} ]; then
+        echo -en ${ALERT}
+    elif [ ${SYSLOAD} -gt ${MLOAD} ]; then
+        echo -en ${Red}
+    elif [ ${SYSLOAD} -gt ${SLOAD} ]; then
+        echo -en ${BRed}
+    else
+        echo -en ${Green}
+    fi
+}
+
+#-------------------------------------------------------------
+# Returns a color according to free disk space in $PWD.
+#-------------------------------------------------------------
+function disk_color()
+{
+    if [ ! -w "${PWD}" ] ; then
+        echo -en ${Red}
+        # No 'write' privilege in the current directory.
+    elif [ -s "${PWD}" ] ; then
+        local used=$(command df -P "$PWD" |
+                   awk 'END {print $5} {sub(/%/,"")}')
+        if [ ${used} -gt 95 ]; then
+            echo -en ${ALERT}           # Disk almost full (>95%).
+        elif [ ${used} -gt 90 ]; then
+            echo -en ${BRed}            # Free disk space almost gone.
+        else
+            echo -en ${Green}           # Free disk space is ok.
+        fi
+    else
+        echo -en ${Cyan}
+        # Current directory is size '0' (like /proc, /sys etc).
+    fi
+}
+
+#-------------------------------------------------------------
+# Returns a color according to running/suspended jobs.
+#-------------------------------------------------------------
+function job_color()
+{
+    if [ $(jobs -s | wc -l) -gt "0" ]; then
+        echo -en ${BRed}
+    elif [ $(jobs -r | wc -l) -gt "0" ] ; then
+        echo -en ${BCyan}
+    fi
+}
+
+#-------------------------------------------------------------
+# A few fun ones
+#-------------------------------------------------------------
+
+# Adds some text in the terminal frame (if applicable).
+function xtitle()
+{
+    case "$TERM" in
+    *term* | rxvt)
+        echo -en  "\e]0;$*\a" ;;
+    *)  ;;
+    esac
+}
+
+# Aliases that use xtitle
+alias top='xtitle Processes on $HOST && top'
+alias make='xtitle Making $(basename $PWD) ; make'
+
+# .. and functions
+function man()
+{
+    for i ; do
+        xtitle The $(basename $1|tr -d .[:digit:]) manual
+        command man -a "$i"
+    done
+}
+
+
+#-------------------------------------------------------------
+# File & strings related functions:
+#-------------------------------------------------------------
+
+# Find a file with a pattern in name:
+function ff() { find . -type f -iname '*'"$*"'*' -ls ; }
+
+# Find a file with pattern $1 in name and Execute $2 on it:
+function fe() { find . -type f -iname '*'"${1:-}"'*' \
+-exec ${2:-file} {} \;  ; }
+
+#  Find a pattern in a set of files and highlight them:
+#+ (needs a recent version of egrep).
+function fstr()
+{
+    OPTIND=1
+    local mycase=""
+    local usage="fstr: find string in files.
+Usage: fstr [-i] \"pattern\" [\"filename pattern\"] "
+    while getopts :it opt
+    do
+        case "$opt" in
+           i) mycase="-i " ;;
+           *) echo "$usage"; return ;;
+        esac
+    done
+    shift $(( $OPTIND - 1 ))
+    if [ "$#" -lt 1 ]; then
+        echo "$usage"
+        return;
+    fi
+    find . -type f -name "${2:-*}" -print0 | \
+xargs -0 egrep --color=always -sn ${case} "$1" 2>&- | more
+
+}
+
+function swap()
+{ # Swap 2 filenames around, if they exist (from Uzi's bashrc).
+    local TMPFILE=tmp.$$
+
+    [ $# -ne 2 ] && echo "swap: 2 arguments needed" && return 1
+    [ ! -e $1 ] && echo "swap: $1 does not exist" && return 1
+    [ ! -e $2 ] && echo "swap: $2 does not exist" && return 1
+
+    mv "$1" $TMPFILE
+    mv "$2" "$1"
+    mv $TMPFILE "$2"
+}
+
+function extract()      # Handy Extract Program
+{
+    if [ -f $1 ] ; then
+        case $1 in
+            *.tar.bz2)   tar xvjf $1     ;;
+            *.tar.gz)    tar xvzf $1     ;;
+            *.bz2)       bunzip2 $1      ;;
+            *.rar)       unrar x $1      ;;
+            *.gz)        gunzip $1       ;;
+            *.tar)       tar xvf $1      ;;
+            *.tbz2)      tar xvjf $1     ;;
+            *.tgz)       tar xvzf $1     ;;
+            *.zip)       unzip $1        ;;
+            *.Z)         uncompress $1   ;;
+            *.7z)        7z x $1         ;;
+            *)           echo "'$1' cannot be extracted via >extract<" ;;
+        esac
+    else
+        echo "'$1' is not a valid file!"
+    fi
+}
+
+# Creates an archive (*.tar.gz) from given directory.
+function xmaketar() { tar cvzf "${1%%/}.tar.gz"  "${1%%/}/"; }
+
+# Create a ZIP archive of a file or folder.
+function xmakezip() { zip -r "${1%%/}.zip" "$1" ; }
+
+# Make your directories and files access rights sane.
+function xsanitize() { chmod -R u=rwX,g=rX,o= "$@" ;}
+
+# Print list of files and folders when changing directory
+function cdls() { cd "$@" && ls -lv --group-directories-first; }
+
+#-------------------------------------------------------------
+# Process/system related functions:
+#-------------------------------------------------------------
+
+function my_ps() { ps $@ -u $USER -o pid,%cpu,%mem,bsdtime,command ; }
+function pp() { my_ps f | awk '!/awk/ && $0~var' var=${1:-".*"} ; }
+
+
+function killps()   # kill by process name
+{
+    local pid pname sig="-TERM"   # default signal
+    if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+        echo "Usage: killps [-SIGNAL] pattern"
+        return;
+    fi
+    if [ $# = 2 ]; then sig=$1 ; fi
+    for pid in $(my_ps| awk '!/awk/ && $0~pat { print $1 }' pat=${!#} )
+    do
+        pname=$(my_ps | awk '$1~var { print $5 }' var=$pid )
+        if ask "Kill process $pid <$pname> with signal $sig?"
+            then kill $sig $pid
+        fi
+    done
+}
+
+function mydf()         # Pretty-print of 'df' output.
+{                       # Inspired by 'dfc' utility.
+    for fs ; do
+
+        if [ ! -d $fs ]
+        then
+          echo -e $fs" :No such file or directory" ; continue
+        fi
+
+        local info=( $(command df -P $fs | awk 'END{ print $2,$3,$5 }') )
+        local free=( $(command df -Pkh $fs | awk 'END{ print $4 }') )
+        local nbstars=$(( 20 * ${info[1]} / ${info[0]} ))
+        local out="["
+        for ((j=0;j<20;j++)); do
+            if [ ${j} -lt ${nbstars} ]; then
+               out=$out"*"
+            else
+               out=$out"-"
+            fi
+        done
+        out=${info[2]}" "$out"] ("$free" free on "$fs")"
+        echo -e $out
+    done
+}
+
+function my_ip() # Get IP adress on ethernet.
+{
+    MY_IP=$(/sbin/ifconfig eth0 | awk '/inet/ { print $2 } ' |
+      sed -e s/addr://)
+    echo ${MY_IP:-"Not connected"}
+}
+
+function ii()   # Get current host related info.
+{
+    echo -e "\nYou are logged on ${BRed}$HOST"
+    echo -e "\n${BRed}Additionnal information:$NC " ; uname -a
+    echo -e "\n${BRed}Users logged on:$NC " ; w -hs |
+             cut -d " " -f1 | sort | uniq
+    echo -e "\n${BRed}Current date :$NC " ; date
+    echo -e "\n${BRed}Machine stats :$NC " ; uptime
+    echo -e "\n${BRed}Memory stats :$NC " ; free
+    echo -e "\n${BRed}Diskspace :$NC " ; mydf / $HOME
+    echo -e "\n${BRed}Local IP Address :$NC" ; my_ip
+    echo -e "\n${BRed}Open connections :$NC "; netstat -pan --inet;
+    echo
+}
+
+#-------------------------------------------------------------
+# Misc utilities:
+#-------------------------------------------------------------
+
+function repeat()       # Repeat n times command.
+{
+    local i max
+    max=$1; shift;
+    for ((i=1; i <= max ; i++)); do  # --> C-like syntax
+        eval "$@";
+    done
+}
+
+function ask()          # See 'killps' for example of use.
+{
+    echo -n "$@" '[y/n] ' ; read ans
+    case "$ans" in
+        y*|Y*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+function corename()   # Get name of app that created a corefile.
+{
+    for file ; do
+        echo -n $file : ; gdb --core=$file --batch | head -1
+    done
+}
+
+function allcolors() {
+    # credit to http://askubuntu.com/a/279014
+    for x in 0 1 4 5 7 8; do
+        for i in `seq 30 37`; do
+            for a in `seq 40 47`; do
+                echo -ne "\e[$x;$i;$a""m\\\e[$x;$i;$a""m\e[0;37;40m "
+            done
+            echo
+        done
+    done
+    echo ""
+}
+
+# function checks if the application is installed
+function __add_command_replace_alias() {
+    if [ -x "`which $2 2>&1`" ]; then
+        alias $1=$2
+    fi
+}
