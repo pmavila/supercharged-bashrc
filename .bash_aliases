@@ -66,6 +66,7 @@ alias which='type -a'
 alias ..='cd ..'
 alias ...='cd ../..'
 alias bc='bc -l'
+alias ssh-hosts="sed -rn 's/^\s*Host\s+(.*)\s*/\1/ip' ~/.ssh/config"
 
 # Pretty-print of some PATH variables:
 alias path='echo -e ${PATH//:/\\n}'

@@ -99,8 +99,12 @@ unset MAILCHECK        # Don't want my shell to warn me of incoming mail.
 #-------------------------------------------------------------
 # Welcome Greeting
 #-------------------------------------------------------------
-echo -e "${BCyan}This is BASH ${BRed}${BASH_VERSION%.*}${BCyan}\
- - DISPLAY on ${BRed}$DISPLAY${NC}\n"
+#echo -e "${BCyan}This is BASH ${BRed}${BASH_VERSION%.*}${BCyan}\
+# - DISPLAY on ${BRed}$DISPLAY${NC}\n"
+if [ -x "`which neofetch 2>&1`" ]; then
+neofetch;
+fi
+
 date
 
 #-------------------------------------------------------------
