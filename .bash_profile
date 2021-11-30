@@ -14,3 +14,4 @@ fi
 echo
 echo "Have a nice day!"
 echo
+source "$HOME/.cargo/env"

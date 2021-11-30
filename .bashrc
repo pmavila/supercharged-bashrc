@@ -103,6 +103,8 @@ unset MAILCHECK        # Don't want my shell to warn me of incoming mail.
 # - DISPLAY on ${BRed}$DISPLAY${NC}\n"
 if [ -x "`which neofetch 2>&1`" ]; then
 neofetch;
+fishlogin;
+neofetch;
 fi
 
 date
@@ -277,3 +279,4 @@ if ! shopt -oq posix; then
     . /etc/bash_completion
   fi
 fi
+source "$HOME/.cargo/env"
